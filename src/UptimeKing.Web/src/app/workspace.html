@@ -156,7 +156,7 @@
               >{{ data.summary.averageMs === null ? '—' : data.summary.averageMs
               }}<small>ms</small></strong
             >
-            <p>Across all recorded checks</p>
+            <p>Last 30 days</p>
           </div>
           <div class="metric">
             <span><i class="ph ph-warning-circle" aria-hidden="true"></i>Open incidents</span
@@ -274,10 +274,9 @@
                             [matTooltip]="
                               (h.at | date: 'MMM d, HH:mm') +
                               ' · ' +
-                              h.status +
-                              ' · ' +
-                              (h.averageMs | number: '1.0-0') +
-                              ' ms'
+                              (h.status === 'unknown'
+                                ? 'No checks recorded'
+                                : h.status + ' · ' + (h.averageMs | number: '1.0-0') + ' ms')
                             "
                           ></span>
                         }
@@ -359,65 +358,11 @@
       }
       @if (view === 'overview') {
         <div class="overview-bottom">
-          <section class="chart-panel">
-            <div class="section-heading">
-              <div>
-                <h2>Response time</h2>
-                <p>Hourly averages across all monitors.</p>
-              </div>
-              <span class="period-label"
-                >Last 24 hours<i class="ph ph-clock" aria-hidden="true"></i
-              ></span>
-            </div>
-            <div class="chart-key">
-              <span></span>Average response<span class="chart-value"
-                >{{ data.summary.averageMs ?? '—' }} <small>ms</small></span
-              >
-            </div>
-            @if (data.responseHistory.length) {
-              <svg
-                class="response-chart"
-                viewBox="0 0 680 210"
-                role="img"
-                aria-label="Average response time over the past 24 hours"
-              >
-                <title>Average response time over the past 24 hours</title>
-                @for (y of [25, 75, 125, 175]; track y) {
-                  <line
-                    x1="42"
-                    [attr.y1]="y"
-                    x2="642"
-                    [attr.y2]="y"
-                    stroke="#e9eae6"
-                    stroke-dasharray="3 4"
-                  />
-                  <text x="0" [attr.y]="y + 4">
-                    {{ (chartMax() * (175 - y)) / 150 | number: '1.0-0' }}
-                  </text>
-                }
-                <polygon [attr.points]="chartArea()" fill="#e9f3ed" />
-                <polyline
-                  [attr.points]="chartPoints()"
-                  fill="none"
-                  stroke="#398569"
-                  stroke-width="2.5"
-                  stroke-linejoin="round"
-                />
-                @if (data.responseHistory.length === 1) {
-                  <circle
-                    cx="42"
-                    [attr.cy]="175 - (data.responseHistory[0].averageMs / chartMax()) * 150"
-                    r="4"
-                    fill="#398569"
-                  />
-                }
-                <text x="42" y="202">{{ data.responseHistory[0].at | date: 'HH:mm' }}</text>
-                <text x="600" y="202">{{ data.asOf | date: 'HH:mm' }}</text>
-              </svg>
-            } @else {
-              <div class="empty-chart">Response history appears after the first check.</div>
-            }
-          </section>
+          <uk-response-chart
+            [points]="data.responseHistory"
+            [asOf]="data.asOf"
+            [averageMs]="data.responseAverageMs"
+          />
           <section class="activity-panel">
             <div class="section-heading">
               <div>
@@ -537,120 +482,7 @@
         </div>
       }
       @if (view === 'notifications') {
-        @if (!api.authenticated()) {
-          <div class="notification-preview">
-            <div class="notification-illustration">
-              <i class="ph ph-bell-ringing" aria-hidden="true"></i>
-            </div>
-            <h2>Configure notifications</h2>
-            <p>Sign in to choose an email recipient or add a Discord webhook.</p>
-            <div class="channel-previews">
-              <span><i class="ph ph-envelope-simple" aria-hidden="true"></i>Email</span
-              ><span><i class="ph ph-discord-logo" aria-hidden="true"></i>Discord</span>
-            </div>
-            <button mat-flat-button (click)="signIn()">Sign in to configure</button>
-          </div>
-        } @else {
-          @if (settingsError()) {
-            <p class="form-error" role="alert">{{ settingsError() }}</p>
-          }
-          @if (settings(); as s) {
-            <form (ngSubmit)="saveSettings()" class="notification-form">
-              <section class="notification-channel">
-                <div class="channel-heading">
-                  <span class="channel-icon"
-                    ><i class="ph ph-envelope-simple" aria-hidden="true"></i
-                  ></span>
-                  <div>
-                    <h2>Email</h2>
-                    <p>Send alerts to an email address.</p>
-                  </div>
-                  <mat-slide-toggle
-                    name="emailEnabled"
-                    [(ngModel)]="s.emailEnabled"
-                    aria-label="Enable email notifications"
-                  ></mat-slide-toggle>
-                </div>
-                <mat-form-field appearance="outline"
-                  ><mat-label>Send alerts to</mat-label
-                  ><input
-                    matInput
-                    type="email"
-                    name="email"
-                    [(ngModel)]="s.email"
-                    placeholder="you@studio.com"
-                /></mat-form-field>
-                <p class="form-note">
-                  {{
-                    s.smtpConfigured
-                      ? 'SMTP is configured on this server.'
-                      : 'Configure SMTP on the server before enabling email.'
-                  }}
-                </p>
-              </section>
-              <section class="notification-channel">
-                <div class="channel-heading">
-                  <span class="channel-icon"
-                    ><i class="ph ph-discord-logo" aria-hidden="true"></i
-                  ></span>
-                  <div>
-                    <h2>Discord</h2>
-                    <p>Post alerts to a Discord channel.</p>
-                  </div>
-                  <mat-slide-toggle
-                    name="discordEnabled"
-                    [(ngModel)]="s.discordEnabled"
-                    aria-label="Enable Discord notifications"
-                  ></mat-slide-toggle>
-                </div>
-                <mat-form-field appearance="outline"
-                  ><mat-label>{{
-                    s.hasDiscordWebhook ? 'Replace webhook URL (optional)' : 'Webhook URL'
-                  }}</mat-label
-                  ><input
-                    matInput
-                    type="password"
-                    autocomplete="off"
-                    name="webhook"
-                    [(ngModel)]="webhook"
-                    placeholder="https://discord.com/api/webhooks/…"
-                /></mat-form-field>
-                <p class="form-note">
-                  {{
-                    s.hasDiscordWebhook
-                      ? 'A webhook is saved. Leave this blank to keep it.'
-                      : 'Create a webhook in Discord → Server settings → Integrations.'
-                  }}
-                </p>
-              </section>
-              <div class="settings-save">
-                <p>Alerts are sent when an incident opens or resolves.</p>
-                <button mat-flat-button type="submit" [disabled]="saving()">
-                  {{ saving() ? 'Saving…' : 'Save settings' }}
-                </button>
-              </div>
-            </form>
-            <section class="delivery-history">
-              <h2>Delivery history</h2>
-              @for (d of s.deliveries; track d.id) {
-                <div class="delivery-row">
-                  <i
-                    [class]="d.channel === 'email' ? 'ph ph-envelope-simple' : 'ph ph-discord-logo'"
-                    aria-hidden="true"
-                  ></i
-                  ><span>{{ d.message }}</span
-                  ><span>{{
-                    d.deliveredAt ? 'Delivered' : d.attempts >= 6 ? 'Failed' : 'Queued'
-                  }}</span>
-                </div>
-              } @empty {
-                <p class="muted">
-                  No notifications sent yet. Deliveries appear here after the first incident.
-                </p>
-              }
-            </section>
-          }
-        }
+        <uk-notification-settings [refreshVersion]="settingsRefresh()" (signIn)="signIn()" />
       }
       <footer class="page-footer">
         <span>Last updated {{ data.asOf | date: 'HH:mm:ss' }}</span>

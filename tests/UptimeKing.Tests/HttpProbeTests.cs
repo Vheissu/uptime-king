@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.DependencyInjection;
 using UptimeKing.Api.Monitoring;
 using Monitor = UptimeKing.Api.Domain.Monitor;
 
@@ -63,6 +64,47 @@ public class HttpProbeTests
         );
         Assert.False(result.Success);
         Assert.Equal("Connection or TLS failure", result.Error);
+    }
+
+    [Theory]
+    [InlineData(503, 2, true)]
+    [InlineData(429, 2, true)]
+    [InlineData(404, 1, false)]
+    public async Task Configured_Polly_pipeline_retries_only_transient_failures(
+        int firstStatus,
+        int expectedAttempts,
+        bool success
+    )
+    {
+        var attempts = 0;
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services
+            .AddProbeClient()
+            .ConfigurePrimaryHttpMessageHandler(() =>
+                new Handler(
+                    (_, _) =>
+                        Task.FromResult(
+                            new HttpResponseMessage(
+                                (HttpStatusCode)(++attempts == 1 ? firstStatus : 200)
+                            )
+                            {
+                                Content = new StreamContent(new ThrowingStream()),
+                            }
+                        )
+                )
+            );
+        await using var provider = services.BuildServiceProvider();
+        var probe = new HttpProbe(
+            provider.GetRequiredService<IHttpClientFactory>(),
+            TimeProvider.System
+        );
+        var result = await probe.CheckAsync(
+            new Monitor { Url = "https://example.com" },
+            CancellationToken.None
+        );
+        Assert.Equal(expectedAttempts, attempts);
+        Assert.Equal(success, result.Success);
     }
 
     private sealed class Factory(HttpMessageHandler handler) : IHttpClientFactory

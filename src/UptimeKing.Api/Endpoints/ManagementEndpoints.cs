@@ -1,6 +1,6 @@
 using System.Net.Mail;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using UptimeKing.Api.Data;
 using UptimeKing.Api.Domain;
@@ -25,7 +25,7 @@ public record SettingsInput(
     bool DiscordEnabled
 );
 
-public record PauseInput(bool Paused);
+public record PauseInput([property: JsonRequired] bool Paused);
 
 public static class ManagementEndpoints
 {
@@ -49,12 +49,7 @@ public static class ManagementEndpoints
         var group = app.MapGroup("/api").RequireAuthorization();
         group.MapPost(
             "/monitors",
-            async (
-                MonitorInput i,
-                UptimeDb db,
-                IHubContext<DashboardHub> hub,
-                CancellationToken ct
-            ) =>
+            async (MonitorInput i, UptimeDb db, DashboardUpdates updates, CancellationToken ct) =>
             {
                 if (Validate(i) is { } error)
                     return Results.BadRequest(new { error });
@@ -75,7 +70,7 @@ public static class ManagementEndpoints
                 db.Monitors.Add(m);
                 await db.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
-                await hub.Clients.All.SendAsync("dashboardChanged", ct);
+                await updates.PublishAsync(ct);
                 return Results.Created($"/api/monitors/{m.Id}", new { m.Id });
             }
         );
@@ -85,7 +80,7 @@ public static class ManagementEndpoints
                 Guid id,
                 MonitorInput i,
                 UptimeDb db,
-                IHubContext<DashboardHub> hub,
+                DashboardUpdates updates,
                 CancellationToken ct
             ) =>
             {
@@ -107,7 +102,7 @@ public static class ManagementEndpoints
                     );
                 if (changed == 0)
                     return Results.NotFound();
-                await hub.Clients.All.SendAsync("dashboardChanged", ct);
+                await updates.PublishAsync(ct);
                 return Results.NoContent();
             }
         );
@@ -117,7 +112,7 @@ public static class ManagementEndpoints
                 Guid id,
                 PauseInput i,
                 UptimeDb db,
-                IHubContext<DashboardHub> hub,
+                DashboardUpdates updates,
                 CancellationToken ct
             ) =>
             {
@@ -133,26 +128,26 @@ public static class ManagementEndpoints
                     );
                 if (changed == 0)
                     return Results.NotFound();
-                await hub.Clients.All.SendAsync("dashboardChanged", ct);
+                await updates.PublishAsync(ct);
                 return Results.NoContent();
             }
         );
         group.MapDelete(
             "/monitors/{id:guid}",
-            async (Guid id, UptimeDb db, IHubContext<DashboardHub> hub, CancellationToken ct) =>
+            async (Guid id, UptimeDb db, DashboardUpdates updates, CancellationToken ct) =>
             {
                 if (
                     await db.Monitors.Where(x => x.Id == id && !x.IsDemo).ExecuteDeleteAsync(ct)
                     == 0
                 )
                     return Results.NotFound();
-                await hub.Clients.All.SendAsync("dashboardChanged", ct);
+                await updates.PublishAsync(ct);
                 return Results.NoContent();
             }
         );
         group.MapPost(
             "/incidents/{id:guid}/acknowledge",
-            async (Guid id, UptimeDb db, IHubContext<DashboardHub> hub, CancellationToken ct) =>
+            async (Guid id, UptimeDb db, DashboardUpdates updates, CancellationToken ct) =>
             {
                 var count = await db
                     .Incidents.Where(x =>
@@ -167,7 +162,7 @@ public static class ManagementEndpoints
                     );
                 if (count == 0)
                     return Results.NotFound();
-                await hub.Clients.All.SendAsync("dashboardChanged", ct);
+                await updates.PublishAsync(ct);
                 return Results.NoContent();
             }
         );
@@ -223,6 +218,8 @@ public static class ManagementEndpoints
                     && !NotificationValidation.IsDiscordWebhook(i.DiscordWebhook)
                 )
                     return Results.BadRequest(new { error = "Enter a discord.com webhook URL." });
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(817241)", ct);
                 var s = await db.Settings.SingleOrDefaultAsync(ct);
                 if (s is null)
                 {
@@ -239,6 +236,7 @@ public static class ManagementEndpoints
                 s.EmailEnabled = i.EmailEnabled;
                 s.DiscordEnabled = i.DiscordEnabled;
                 await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
                 return Results.NoContent();
             }
         );

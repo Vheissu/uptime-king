@@ -11,8 +11,11 @@ public static class PublicEndpointPolicy
         && uri.IsDefaultPort
         && string.IsNullOrEmpty(uri.UserInfo)
         && string.IsNullOrEmpty(uri.Fragment)
-        && uri.Host.Contains('.')
-        && (!IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) || IsPublic(address));
+        && (
+            IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address)
+                ? IsPublic(address)
+                : uri.Host.Contains('.')
+        );
 
     public static bool IsPublic(IPAddress address)
     {
@@ -25,9 +28,12 @@ public static class PublicEndpointPolicy
             // Only globally routable unicast; exclude documentation, Teredo and 6to4.
             return (b[0] & 0xe0) == 0x20
                 && !(b[0] == 0x20 && b[1] == 0x01 && (b[2] < 2 || b[2] == 0x0d && b[3] == 0xb8))
-                && !(b[0] == 0x20 && b[1] == 0x02);
+                && !(b[0] == 0x20 && b[1] == 0x02)
+                && !(b[0] == 0x3f && b[1] == 0xff && (b[2] & 0xf0) == 0);
         return b[0] is not (0 or 10 or 127)
             && b[0] < 224
+            // Azure WireServer is a platform endpoint despite its public-looking address.
+            && !(b[0] == 168 && b[1] == 63 && b[2] == 129 && b[3] == 16)
             && !(b[0] == 100 && b[1] is >= 64 and <= 127)
             && !(b[0] == 169 && b[1] == 254)
             && !(b[0] == 172 && b[1] is >= 16 and <= 31)

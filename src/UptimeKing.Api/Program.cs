@@ -2,10 +2,8 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Http.Resilience;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using Polly;
 using UptimeKing.Api.Data;
 using UptimeKing.Api.Endpoints;
 using UptimeKing.Api.Monitoring;
@@ -37,6 +35,13 @@ builder
             ? CookieSecurePolicy.SameAsRequest
             : CookieSecurePolicy.Always;
         o.ExpireTimeSpan = TimeSpan.FromHours(8);
+        o.Events.OnValidatePrincipal = context =>
+        {
+            var config = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+            if (!PasswordStamp.Matches(context.Principal, config["Auth:Password"]))
+                context.RejectPrincipal();
+            return Task.CompletedTask;
+        };
         o.Events.OnRedirectToLogin = c =>
         {
             c.Response.StatusCode = 401;
@@ -66,41 +71,15 @@ builder.Services.AddRateLimiter(o =>
     );
 });
 builder.Services.AddSignalR();
-builder
-    .Services.AddHttpClient(
-        "probe",
-        c =>
-        {
-            c.Timeout = Timeout.InfiniteTimeSpan;
-            c.DefaultRequestHeaders.UserAgent.ParseAdd(
-                "UptimeKing/1.0 (+https://github.com/Vheissu/uptime-king)"
-            );
-        }
-    )
-    .RemoveAllLoggers()
-    .ConfigurePrimaryHttpMessageHandler(PublicEndpointPolicy.CreateHandler)
-    .AddResilienceHandler(
-        "probe",
-        p =>
-        {
-            p.AddTimeout(TimeSpan.FromSeconds(25));
-            p.AddRetry(
-                new HttpRetryStrategyOptions
-                {
-                    MaxRetryAttempts = 1,
-                    Delay = TimeSpan.FromMilliseconds(300),
-                    UseJitter = true,
-                }
-            );
-            p.AddTimeout(TimeSpan.FromSeconds(10));
-        }
-    );
+builder.Services.AddProbeClient();
 builder
     .Services.AddHttpClient("notifications", c => c.Timeout = TimeSpan.FromSeconds(15))
     .RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(PublicEndpointPolicy.CreateHandler);
 builder.Services.AddScoped<IHttpProbe, HttpProbe>();
 builder.Services.AddScoped<MonitorRunner>();
+builder.Services.AddScoped<MonitorClaimStore>();
+builder.Services.AddSingleton<DashboardUpdates>();
 builder.Services.AddScoped<INotificationSender, NotificationSender>();
 builder.Services.AddScoped<NotificationDispatcher>();
 if (builder.Configuration.GetValue("Monitoring:Enabled", true))
@@ -133,7 +112,15 @@ var password = builder.Configuration["Auth:Password"];
 if (!string.IsNullOrEmpty(password) && password.Length < 16)
     throw new InvalidOperationException("Auth:Password must contain at least 16 characters.");
 var app = builder.Build();
-app.UseExceptionHandler();
+app.UseExceptionHandler(
+    new ExceptionHandlerOptions
+    {
+        StatusCodeSelector = error =>
+            error is BadHttpRequestException badRequest
+                ? badRequest.StatusCode
+                : StatusCodes.Status500InternalServerError,
+    }
+);
 app.Use(
     async (context, next) =>
     {

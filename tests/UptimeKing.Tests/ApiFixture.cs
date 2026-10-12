@@ -100,17 +100,20 @@ public sealed class ApiFactory(string connection, string smtpHost, int smtpPort)
 public sealed class FakeProbe : IHttpProbe
 {
     public bool Success { get; set; } = true;
+    public Func<Monitor, CancellationToken, Task>? BeforeCheck { get; set; }
 
-    public Task<CheckResult> CheckAsync(Monitor monitor, CancellationToken ct) =>
-        Task.FromResult(
-            new CheckResult
-            {
-                MonitorId = monitor.Id,
-                CheckedAt = DateTimeOffset.UtcNow,
-                Success = Success,
-                ResponseMs = 120,
-                StatusCode = Success ? 200 : 503,
-                Error = Success ? null : "HTTP 503",
-            }
-        );
+    public async Task<CheckResult> CheckAsync(Monitor monitor, CancellationToken ct)
+    {
+        if (BeforeCheck is not null)
+            await BeforeCheck(monitor, ct);
+        return new CheckResult
+        {
+            MonitorId = monitor.Id,
+            CheckedAt = DateTimeOffset.UtcNow,
+            Success = Success,
+            ResponseMs = 120,
+            StatusCode = Success ? 200 : 503,
+            Error = Success ? null : "HTTP 503",
+        };
+    }
 }

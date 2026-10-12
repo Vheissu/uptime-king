@@ -14,6 +14,8 @@ public class EndpointPolicyTests
     [InlineData("172.16.0.1")]
     [InlineData("172.31.255.255")]
     [InlineData("169.254.169.254")]
+    [InlineData("168.63.129.16")]
+    [InlineData("::ffff:168.63.129.16")]
     [InlineData("100.64.0.1")]
     [InlineData("0.0.0.0")]
     [InlineData("224.0.0.1")]
@@ -26,6 +28,7 @@ public class EndpointPolicyTests
     [InlineData("fc00::1")]
     [InlineData("fe80::1")]
     [InlineData("2001:db8::1")]
+    [InlineData("3fff::1")]
     [InlineData("2002:a00:1::1")]
     [InlineData("2001::1")]
     public void Blocks_non_public_addresses(string ip) =>
@@ -47,13 +50,16 @@ public class EndpointPolicyTests
     [InlineData("https://example.com/#fragment")]
     [InlineData("http://127.1")]
     [InlineData("http://2130706433")]
+    [InlineData("http://168.63.129.16/?comp=versions")]
     [InlineData("http://[::ffff:127.0.0.1]")]
     public void Rejects_unsafe_urls(string url) =>
         Assert.False(PublicEndpointPolicy.IsValidUrl(url));
 
-    [Fact]
-    public void Accepts_public_https_url() =>
-        Assert.True(PublicEndpointPolicy.IsValidUrl("https://example.com/health?check=1"));
+    [Theory]
+    [InlineData("https://example.com/health?check=1")]
+    [InlineData("https://[2606:4700:4700::1111]/")]
+    public void Accepts_public_https_url(string url) =>
+        Assert.True(PublicEndpointPolicy.IsValidUrl(url));
 
     [Theory]
     [InlineData("https://discord.com.evil.example/api/webhooks/123/token")]

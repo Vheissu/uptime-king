@@ -121,9 +121,9 @@ npm test
 npm run build
 ```
 
-Backend integration tests start real PostgreSQL and Mailpit containers through Testcontainers. Docker must be available. They cover API authentication, demo isolation, monitor changes, lease fencing, concurrent completion, incident transitions, outbox delivery and SignalR access. Network probes are replaced in integration tests; focused probe tests exercise HTTP status, header-only reads, cancellation and error handling.
+Backend integration tests start real PostgreSQL and Mailpit containers through Testcontainers. Docker must be available. They cover API authentication, demo isolation, monitor changes, lease fencing, competing claims, scheduler capacity, concurrent completion, incident transitions, ordered outbox delivery, password rotation and SignalR access. Network probes are replaced in integration tests; focused probe tests exercise HTTP status, header-only reads, cancellation and error handling.
 
-Frontend tests cover stale refresh responses, guest/workspace separation, network recovery, CSRF headers and error responses. CI runs both suites, checks formatting, builds the frontend, and starts the Docker stack for a smoke test. Browser verification and screenshots are documented in [verification notes](docs/verification.md).
+Frontend tests cover stale refresh responses, guest/workspace separation, network recovery, session races, reconnection, chart gaps, CSRF headers and error responses. CI builds the complete .NET solution including the Aspire AppHost, runs both suites, checks formatting, builds the frontend, and starts the Docker stack for a smoke test. Browser verification and screenshots are documented in [verification notes](docs/verification.md). The [review findings](docs/code-review.md) explain the failure cases covered by the regression tests.
 
 ## Project layout
 

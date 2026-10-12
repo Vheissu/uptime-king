@@ -11,7 +11,8 @@ namespace UptimeKing.Api.Notifications;
 public static class NotificationValidation
 {
     public static bool IsDiscordWebhook(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        value.Length <= 2048
+        && Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme == "https"
         && uri.Host == "discord.com"
         && uri.IsDefaultPort
@@ -67,9 +68,11 @@ public sealed class NotificationSender(
             response.EnsureSuccessStatusCode();
             return;
         }
+        if (delivery.Channel != "email")
+            throw new InvalidOperationException("Unknown notification channel");
         if (!settings.EmailEnabled)
             throw new InvalidOperationException("Channel disabled");
-        var mail = new MimeMessage();
+        using var mail = new MimeMessage();
         mail.From.Add(MailboxAddress.Parse(config["Smtp:From"] ?? "uptime@localhost"));
         mail.To.Add(MailboxAddress.Parse(settings.Email));
         mail.Subject =

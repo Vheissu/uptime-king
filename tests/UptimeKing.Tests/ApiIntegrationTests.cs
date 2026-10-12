@@ -27,6 +27,7 @@ public sealed class ApiIntegrationTests(ApiFixture fixture)
         await db.Monitors.Where(m => !m.IsDemo).ExecuteDeleteAsync();
         await db.Settings.ExecuteDeleteAsync();
         fixture.Factory.Probe.Success = true;
+        fixture.Factory.Probe.BeforeCheck = null;
     }
 
     public Task DisposeAsync() => Task.CompletedTask;
@@ -421,6 +422,321 @@ public sealed class ApiIntegrationTests(ApiFixture fixture)
             .Build();
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync());
         Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task Open_incidents_remain_visible_after_more_than_100_recoveries()
+    {
+        var id = await CreateAsync();
+        using (var scope = fixture.Factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<UptimeDb>();
+            db.Incidents.Add(
+                new()
+                {
+                    MonitorId = id,
+                    StartedAt = DateTimeOffset.UtcNow.AddDays(-7),
+                    Cause = "Still down",
+                }
+            );
+            db.Incidents.AddRange(
+                Enumerable
+                    .Range(1, 101)
+                    .Select(n => new Incident
+                    {
+                        MonitorId = id,
+                        StartedAt = DateTimeOffset.UtcNow.AddMinutes(-n * 2),
+                        ResolvedAt = DateTimeOffset.UtcNow.AddMinutes(-n * 2 + 1),
+                        Cause = "Recovered",
+                    })
+            );
+            await db.SaveChangesAsync();
+        }
+        var dashboard = await fixture.Admin.GetFromJsonAsync<JsonElement>("/api/dashboard");
+        var incidents = dashboard.GetProperty("incidents").EnumerateArray().ToArray();
+        Assert.Equal(101, incidents.Length);
+        Assert.Single(incidents, i => i.GetProperty("resolvedAt").ValueKind == JsonValueKind.Null);
+    }
+
+    [Fact]
+    public async Task Concurrent_schedulers_claim_disjoint_monitors_and_reclaim_expired_leases()
+    {
+        for (var i = 0; i < 10; i++)
+            await CreateAsync();
+        async Task<IReadOnlyList<Monitor>> Claim()
+        {
+            await using var scope = fixture.Factory.Services.CreateAsyncScope();
+            return await scope
+                .ServiceProvider.GetRequiredService<MonitorClaimStore>()
+                .ClaimAsync(8, CancellationToken.None);
+        }
+        var claims = (await Task.WhenAll(Claim(), Claim())).SelectMany(x => x).ToList();
+        Assert.Equal(10, claims.Count);
+        Assert.Equal(10, claims.Select(x => x.Id).Distinct().Count());
+        Assert.All(claims, m => Assert.NotNull(m.LeaseToken));
+        Assert.Empty(await Claim());
+        await using var verify = fixture.Factory.Services.CreateAsyncScope();
+        var db = verify.ServiceProvider.GetRequiredService<UptimeDb>();
+        var previous = claims[0];
+        await db
+            .Monitors.Where(m => m.Id == previous.Id)
+            .ExecuteUpdateAsync(s =>
+                s.SetProperty(m => m.LeaseUntil, DateTimeOffset.UtcNow.AddSeconds(-1))
+            );
+        var reclaimed = Assert.Single(await Claim());
+        Assert.Equal(previous.Id, reclaimed.Id);
+        Assert.NotEqual(previous.LeaseToken, reclaimed.LeaseToken);
+    }
+
+    [Fact]
+    public async Task Slow_probe_does_not_block_reuse_of_other_worker_slots()
+    {
+        for (var i = 0; i < 9; i++)
+            await CreateAsync();
+        var started = System.Threading.Channels.Channel.CreateUnbounded<Guid>();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = 0;
+        fixture.Factory.Probe.BeforeCheck = async (monitor, ct) =>
+        {
+            started.Writer.TryWrite(monitor.Id);
+            if (Interlocked.Increment(ref first) == 1)
+                await release.Task.WaitAsync(ct);
+        };
+        using var worker = new MonitorWorker(
+            fixture.Factory.Services.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System,
+            NullLogger<MonitorWorker>.Instance
+        );
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var ids = new HashSet<Guid>();
+            for (var i = 0; i < 9; i++)
+                ids.Add(await started.Reader.ReadAsync(timeout.Token));
+            Assert.Equal(9, ids.Count);
+            Assert.False(release.Task.IsCompleted);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await worker.StopAsync(CancellationToken.None);
+            fixture.Factory.Probe.BeforeCheck = null;
+        }
+    }
+
+    [Fact]
+    public async Task Unclaimed_monitor_cannot_commit_a_check()
+    {
+        var id = await CreateAsync();
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        var monitor = await scope
+            .ServiceProvider.GetRequiredService<UptimeDb>()
+            .Monitors.FindAsync(id);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            scope
+                .ServiceProvider.GetRequiredService<MonitorRunner>()
+                .RunAsync(monitor!, CancellationToken.None)
+        );
+    }
+
+    [Fact]
+    public async Task Concurrent_initial_notification_settings_are_serialized()
+    {
+        var responses = await Task.WhenAll(
+            Enumerable
+                .Range(0, 4)
+                .Select(i =>
+                    fixture.Admin.PutAsJsonAsync(
+                        "/api/notifications",
+                        new SettingsInput($"operator{i}@example.test", false, null, false)
+                    )
+                )
+        );
+        Assert.All(responses, r => Assert.Equal(HttpStatusCode.NoContent, r.StatusCode));
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        Assert.Single(
+            await scope.ServiceProvider.GetRequiredService<UptimeDb>().Settings.ToListAsync()
+        );
+    }
+
+    [Theory]
+    [InlineData("a-different-workspace-password")]
+    [InlineData(null)]
+    public async Task Password_rotation_or_removal_rejects_existing_cookie(string? password)
+    {
+        var config =
+            fixture.Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+        try
+        {
+            config["Auth:Password"] = password;
+            using var client = fixture.Factory.CreateClient();
+            client.DefaultRequestHeaders.Add("Cookie", fixture.Cookie);
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await client.GetAsync("/api/dashboard")).StatusCode
+            );
+        }
+        finally
+        {
+            config["Auth:Password"] = ApiFixture.Password;
+        }
+    }
+
+    [Fact]
+    public async Task Disabled_notification_channel_preserves_pending_attempts()
+    {
+        var id = await CreateAsync();
+        await fixture.Admin.PutAsJsonAsync(
+            "/api/notifications",
+            new SettingsInput("test@example.test", true, null, false)
+        );
+        await RunCheckAsync(id, false);
+        await RunCheckAsync(id, false);
+        await fixture.Admin.PutAsJsonAsync(
+            "/api/notifications",
+            new SettingsInput("test@example.test", false, null, false)
+        );
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<UptimeDb>();
+        await new NotificationDispatcher(
+            db,
+            new FailingSender(),
+            TimeProvider.System,
+            NullLogger<NotificationDispatcher>.Instance
+        ).DispatchAsync(CancellationToken.None);
+        Assert.Equal(0, (await db.Deliveries.SingleAsync()).Attempts);
+    }
+
+    [Fact]
+    public async Task Recovery_waits_for_retrying_opening_alert()
+    {
+        var id = await CreateAsync();
+        await fixture.Admin.PutAsJsonAsync(
+            "/api/notifications",
+            new SettingsInput("test@example.test", true, null, false)
+        );
+        await RunCheckAsync(id, false);
+        await RunCheckAsync(id, false);
+        await RunCheckAsync(id, true);
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<UptimeDb>();
+        await new NotificationDispatcher(
+            db,
+            new FailingSender(),
+            TimeProvider.System,
+            NullLogger<NotificationDispatcher>.Instance
+        ).DispatchAsync(CancellationToken.None);
+        var deliveries = await db.Deliveries.ToListAsync();
+        Assert.Equal(1, deliveries.Single(d => d.Kind == "down").Attempts);
+        Assert.Equal(0, deliveries.Single(d => d.Kind == "recovered").Attempts);
+    }
+
+    [Fact]
+    public async Task Shutdown_during_second_delivery_does_not_rollback_first_delivery()
+    {
+        var id = await CreateAsync();
+        await fixture.Admin.PutAsJsonAsync(
+            "/api/notifications",
+            new SettingsInput("test@example.test", true, null, false)
+        );
+        await RunCheckAsync(id, false);
+        await RunCheckAsync(id, false);
+        await RunCheckAsync(id, true);
+        using var cancellation = new CancellationTokenSource();
+        await using (var scope = fixture.Factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<UptimeDb>();
+            var dispatcher = new NotificationDispatcher(
+                db,
+                new CancelRecoverySender(cancellation),
+                TimeProvider.System,
+                NullLogger<NotificationDispatcher>.Instance
+            );
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                dispatcher.DispatchAsync(cancellation.Token)
+            );
+        }
+        await using var verify = fixture.Factory.Services.CreateAsyncScope();
+        var deliveries = await verify
+            .ServiceProvider.GetRequiredService<UptimeDb>()
+            .Deliveries.ToListAsync();
+        Assert.NotNull(deliveries.Single(d => d.Kind == "down").DeliveredAt);
+        Assert.Null(deliveries.Single(d => d.Kind == "recovered").DeliveredAt);
+        Assert.Equal(0, deliveries.Single(d => d.Kind == "recovered").Attempts);
+    }
+
+    [Fact]
+    public async Task Dashboard_distinguishes_missing_history_and_24_hour_response_average()
+    {
+        var id = await CreateAsync();
+        await using (var scope = fixture.Factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<UptimeDb>();
+            db.Checks.AddRange(
+                new CheckResult
+                {
+                    MonitorId = id,
+                    CheckedAt = DateTimeOffset.UtcNow.AddDays(-2),
+                    Success = true,
+                    ResponseMs = 1000,
+                },
+                new CheckResult
+                {
+                    MonitorId = id,
+                    CheckedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                    Success = true,
+                    ResponseMs = 100,
+                }
+            );
+            await db.SaveChangesAsync();
+        }
+        var dashboard = await fixture.Admin.GetFromJsonAsync<JsonElement>("/api/dashboard");
+        Assert.Equal(550, dashboard.GetProperty("summary").GetProperty("averageMs").GetDouble());
+        Assert.Equal(100, dashboard.GetProperty("responseAverageMs").GetDouble());
+        var history = dashboard
+            .GetProperty("monitors")[0]
+            .GetProperty("history")
+            .EnumerateArray()
+            .ToArray();
+        Assert.Equal(25, history.Length);
+        Assert.Single(history, bucket => bucket.GetProperty("status").GetString() == "up");
+        Assert.Equal(
+            24,
+            history.Count(bucket =>
+                bucket.GetProperty("status").GetString() == "unknown"
+                && bucket.GetProperty("averageMs").ValueKind == JsonValueKind.Null
+            )
+        );
+    }
+
+    [Fact]
+    public async Task Missing_pause_flag_cannot_silently_resume_a_monitor()
+    {
+        var id = await CreateAsync();
+        await fixture.Admin.PostAsJsonAsync($"/api/monitors/{id}/pause", new { paused = true });
+        var response = await fixture.Admin.PostAsJsonAsync($"/api/monitors/{id}/pause", new { });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await using var scope = fixture.Factory.Services.CreateAsyncScope();
+        Assert.True(
+            (
+                await scope.ServiceProvider.GetRequiredService<UptimeDb>().Monitors.FindAsync(id)
+            )!.Paused
+        );
+    }
+
+    private sealed class CancelRecoverySender(CancellationTokenSource cancellation)
+        : INotificationSender
+    {
+        public Task SendAsync(NotificationDelivery d, NotificationSettings s, CancellationToken ct)
+        {
+            if (d.Kind == "recovered")
+            {
+                cancellation.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FailingSender : INotificationSender

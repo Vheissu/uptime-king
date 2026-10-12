@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal, HostListener } from '@angular/core';
+import { Component, computed, inject, signal, effect, HostListener } from '@angular/core';
 import { A11yModule } from '@angular/cdk/a11y';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -6,13 +6,12 @@ import { ActivatedRoute, Router, RouterLink, RouterLinkActive } from '@angular/r
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatMenuModule } from '@angular/material/menu';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { NotificationSettingsComponent } from './notification-settings';
+import { ResponseChart } from './response-chart';
 import { UptimeService } from './uptime.service';
-import { Monitor, Incident, NotificationSettings } from './models';
+import { Monitor, Incident } from './models';
 import { MonitorDialog, LoginDialog, ConfirmDialog, DetailDialog } from './dialogs';
 
 @Component({
@@ -26,11 +25,10 @@ import { MonitorDialog, LoginDialog, ConfirmDialog, DetailDialog } from './dialo
     MatButtonModule,
     MatDialogModule,
     MatMenuModule,
-    MatFormFieldModule,
-    MatInputModule,
-    MatSlideToggleModule,
     MatSnackBarModule,
     MatTooltipModule,
+    NotificationSettingsComponent,
+    ResponseChart,
   ],
   templateUrl: './workspace.html',
 })
@@ -54,10 +52,7 @@ export class Workspace {
   status = signal('all');
   mobileOpen = signal(false);
   incidentFilter = signal('all');
-  settings = signal<NotificationSettings | null>(null);
-  settingsError = signal('');
-  saving = signal(false);
-  webhook = '';
+  settingsRefresh = signal(0);
   clients = computed(() =>
     [...new Set(this.api.data()?.monitors.map((m) => m.client) ?? [])].sort(),
   );
@@ -77,23 +72,10 @@ export class Workspace {
     ),
   );
   openIncident = computed(() => this.api.data()?.incidents.find((i) => !i.resolvedAt));
-  chartMax = computed(
-    () =>
-      Math.max(400, ...(this.api.data()?.responseHistory.map((p) => p.averageMs) ?? [400])) * 1.15,
-  );
-  chartPoints = computed(() => {
-    const p = this.api.data()?.responseHistory ?? [];
-    return p
-      .map(
-        (v, i) =>
-          `${42 + (i * 600) / Math.max(1, p.length - 1)},${175 - (v.averageMs / this.chartMax()) * 150}`,
-      )
-      .join(' ');
-  });
-  chartArea = computed(() => (this.chartPoints() ? `42,175 ${this.chartPoints()} 642,175` : ''));
   constructor() {
-    void this.api.init().then(() => {
-      if (this.view === 'notifications' && this.api.authenticated()) void this.loadSettings();
+    void this.api.init();
+    effect(() => {
+      if (!this.api.authenticated()) this.dialog.closeAll();
     });
   }
   @HostListener('document:keydown', ['$event'])
@@ -115,10 +97,7 @@ export class Workspace {
   }
   signIn() {
     this.mobileOpen.set(false);
-    const ref = this.dialog.open(LoginDialog, { width: '480px', maxWidth: '94vw' });
-    ref.afterClosed().subscribe((ok) => {
-      if (ok && this.view === 'notifications') void this.loadSettings();
-    });
+    this.dialog.open(LoginDialog, { width: '480px', maxWidth: '94vw' });
   }
   add(m?: Monitor) {
     if (!this.api.authenticated()) {
@@ -193,37 +172,10 @@ export class Workspace {
     const minutes = Math.max(1, Math.round(ms / 60000));
     return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
   }
-  async loadSettings() {
-    try {
-      this.settings.set(await this.api.settings());
-      this.settingsError.set('');
-    } catch (e) {
-      this.settingsError.set(this.api.message(e));
-    }
-  }
   async refresh() {
+    await this.api.init();
     await this.api.refresh();
-    if (this.view === 'notifications' && this.api.authenticated()) await this.loadSettings();
-  }
-  async saveSettings() {
-    const s = this.settings();
-    if (!s) return;
-    this.saving.set(true);
-    try {
-      await this.api.request('/api/notifications', 'PUT', {
-        email: s.email,
-        emailEnabled: s.emailEnabled,
-        discordEnabled: s.discordEnabled,
-        discordWebhook: this.webhook || null,
-      });
-      this.webhook = '';
-      await this.loadSettings();
-      this.snack.open('Notification settings saved', 'Dismiss', { duration: 4000 });
-    } catch (e) {
-      this.settingsError.set(this.api.message(e));
-    } finally {
-      this.saving.set(false);
-    }
+    this.settingsRefresh.update((version) => version + 1);
   }
   ngOnInit() {
     const client = this.route.snapshot.queryParamMap.get('client');

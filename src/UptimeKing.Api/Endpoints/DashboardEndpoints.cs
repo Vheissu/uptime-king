@@ -84,11 +84,31 @@ public static class DashboardEndpoints
                 AverageMs = g.Average(x => x.ResponseMs),
             })
             .ToListAsync(ct);
+        var firstHour = new DateTimeOffset(
+            day.Year,
+            day.Month,
+            day.Day,
+            day.Hour,
+            0,
+            0,
+            TimeSpan.Zero
+        );
+        var hours = Enumerable.Range(0, 25).Select(offset => firstHour.AddHours(offset)).ToArray();
+        var byHour = buckets.ToDictionary(b => (b.Id, b.At.UtcDateTime.Date.AddHours(b.At.Hour)));
+        var recentResolvedIds = db
+            .Incidents.Where(x => x.Monitor.IsDemo == demo && x.ResolvedAt != null)
+            .OrderByDescending(x => x.StartedAt)
+            .ThenBy(x => x.Id)
+            .Take(100)
+            .Select(x => x.Id);
         var incidents = await db
             .Incidents.AsNoTracking()
-            .Where(x => x.Monitor.IsDemo == demo)
+            .Where(x =>
+                x.Monitor.IsDemo == demo
+                && (x.ResolvedAt == null || recentResolvedIds.Contains(x.Id))
+            )
             .OrderByDescending(x => x.StartedAt)
-            .Take(100)
+            .ThenBy(x => x.Id)
             .Select(x => new
             {
                 x.Id,
@@ -122,17 +142,19 @@ public static class DashboardEndpoints
                         ? (double?)Math.Round(100d * s.Healthy / s.Total, 2)
                         : null,
                     Checks = stats.GetValueOrDefault(m.Id)?.Total ?? 0,
-                    History = buckets
-                        .Where(b => b.Id == m.Id)
-                        .OrderBy(b => b.At)
-                        .Select(b => new
+                    History = hours.Select(hour =>
+                    {
+                        var bucket = byHour.GetValueOrDefault((m.Id, hour.UtcDateTime));
+                        return new
                         {
-                            b.At,
-                            b.AverageMs,
-                            Status = b.Healthy == b.Total ? "up"
-                            : b.Healthy == 0 ? "down"
+                            At = hour,
+                            AverageMs = bucket is null ? (double?)null : bucket.AverageMs,
+                            Status = bucket is null ? "unknown"
+                            : bucket.Healthy == bucket.Total ? "up"
+                            : bucket.Healthy == 0 ? "down"
                             : "degraded",
-                        }),
+                        };
+                    }),
                 }),
                 Summary = new
                 {
@@ -160,6 +182,12 @@ public static class DashboardEndpoints
                     ),
                 },
                 Incidents = incidents,
+                ResponseAverageMs = buckets.Count > 0
+                    ? (double?)
+                        Math.Round(
+                            buckets.Sum(b => b.AverageMs * b.Total) / buckets.Sum(b => b.Total)
+                        )
+                    : null,
                 ResponseHistory = buckets
                     .GroupBy(b => b.At.UtcDateTime.Date.AddHours(b.At.Hour))
                     .OrderBy(g => g.Key)

@@ -45,6 +45,7 @@ const imports = [
             [(ngModel)]="input.url"
             required
             type="url"
+            maxlength="2048"
             placeholder="https://example.com"
         /></mat-form-field>
         <mat-form-field appearance="outline"
@@ -100,11 +101,18 @@ export class MonitorDialog {
   readonly ref = inject(MatDialogRef<MonitorDialog>);
   readonly original = inject<Monitor | null>(MAT_DIALOG_DATA);
   input: MonitorInput = this.original
-    ? { ...this.original }
+    ? {
+        name: this.original.name,
+        url: this.original.url,
+        client: this.original.client,
+        intervalSeconds: this.original.intervalSeconds,
+        slowThresholdMs: this.original.slowThresholdMs,
+      }
     : { name: '', url: '', client: '', intervalSeconds: 60, slowThresholdMs: 1500 };
   error = signal('');
   busy = signal(false);
   async save() {
+    if (this.busy()) return;
     this.busy.set(true);
     this.error.set('');
     try {
@@ -122,6 +130,7 @@ export class MonitorDialog {
   imports,
   template: ` <h2 mat-dialog-title>Sign in</h2>
     <form (ngSubmit)="login()" #form="ngForm">
+      <input type="hidden" name="username" autocomplete="username" value="workspace" />
       <mat-dialog-content>
         <p class="dialog-intro">
           Enter your workspace password to manage monitors and notifications.
@@ -157,6 +166,7 @@ export class LoginDialog {
   error = signal('');
   busy = signal(false);
   async login() {
+    if (this.busy()) return;
     this.busy.set(true);
     try {
       await this.api.login(this.password);
@@ -202,7 +212,7 @@ export class ConfirmDialog {
           <span>Check interval</span><strong>{{ monitor.intervalSeconds }} seconds</strong>
         </div>
       </div>
-      <h3>Recent checks</h3>
+      <h3>{{ api.data()?.isDemo ? 'Hourly history' : 'Recent checks' }}</h3>
       @if (api.data()?.isDemo) {
         <p class="form-note">
           Sample history, grouped by hour. Sign in to see individual checks for your sites.
@@ -214,19 +224,43 @@ export class ConfirmDialog {
       @if (loading()) {
         <p>Loading check history…</p>
       }
-      <div class="history-list">
-        @for (check of checks(); track check.checkedAt) {
-          <div class="history-row">
-            <span>{{ check.checkedAt | date: 'MMM d, HH:mm:ss' }}</span
-            ><span [class]="check.success ? 'text-green' : 'text-red'">{{
-              check.success ? 'Successful' : 'Failed'
-            }}</span
-            ><span>{{ check.statusCode ?? '—' }}</span
-            ><strong>{{ check.responseMs | number: '1.0-0' }} ms</strong>
-          </div>
-        } @empty {
-          @if (!loading()) {
-            <p>No checks yet. The first check will run shortly.</p>
+      <div class="history-list" tabindex="0" role="region" aria-label="Check history">
+        @if (api.data()?.isDemo) {
+          @for (bucket of monitor.history.slice().reverse(); track bucket.at) {
+            <div class="history-row">
+              <span>{{ bucket.at | date: 'MMM d, HH:mm' }}</span>
+              <span>{{
+                bucket.status === 'up'
+                  ? 'All checks passed'
+                  : bucket.status === 'down'
+                    ? 'All checks failed'
+                    : bucket.status === 'unknown'
+                      ? 'No checks'
+                      : 'Mixed results'
+              }}</span>
+              <span>Hourly average</span>
+              <strong
+                >{{
+                  bucket.averageMs === null ? '—' : (bucket.averageMs | number: '1.0-0')
+                }}
+                ms</strong
+              >
+            </div>
+          }
+        } @else {
+          @for (check of checks(); track check.id) {
+            <div class="history-row">
+              <span>{{ check.checkedAt | date: 'MMM d, HH:mm:ss' }}</span
+              ><span [class]="check.success ? 'text-green' : 'text-red'">{{
+                check.success ? 'Successful' : 'Failed'
+              }}</span
+              ><span>{{ check.statusCode ?? '—' }}</span
+              ><strong>{{ check.responseMs | number: '1.0-0' }} ms</strong>
+            </div>
+          } @empty {
+            @if (!loading() && !error()) {
+              <p>No checks recorded.</p>
+            }
           }
         }
       </div> </mat-dialog-content
@@ -245,18 +279,7 @@ export class DetailDialog {
   }
   async load() {
     try {
-      this.checks.set(
-        this.api.data()?.isDemo
-          ? this.monitor.history.map((h, i) => ({
-              id: i,
-              checkedAt: h.at,
-              success: h.status === 'up',
-              statusCode: null,
-              responseMs: h.averageMs,
-              error: null,
-            }))
-          : await this.api.history(this.monitor.id),
-      );
+      if (!this.api.data()?.isDemo) this.checks.set(await this.api.history(this.monitor.id));
     } catch (e) {
       this.error.set(this.api.message(e));
     } finally {

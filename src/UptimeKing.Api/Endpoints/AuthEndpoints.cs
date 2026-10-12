@@ -41,7 +41,10 @@ public static class AuthEndpoints
                             statusCode: 401
                         );
                     var identity = new ClaimsIdentity(
-                        [new Claim(ClaimTypes.Name, "Workspace operator")],
+                        [
+                            new Claim(ClaimTypes.Name, "Workspace operator"),
+                            new Claim(PasswordStamp.ClaimType, PasswordStamp.Create(expected)),
+                        ],
                         CookieAuthenticationDefaults.AuthenticationScheme
                     );
                     await context.SignInAsync(
@@ -62,5 +65,25 @@ public static class AuthEndpoints
                 }
             )
             .RequireAuthorization();
+    }
+}
+
+// The stamp is inside the encrypted authentication ticket, never returned by the session API.
+public static class PasswordStamp
+{
+    public const string ClaimType = "uptime-king:password-version";
+
+    public static string Create(string password) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password)));
+
+    public static bool Matches(ClaimsPrincipal? principal, string? password)
+    {
+        var stamp = principal?.FindFirstValue(ClaimType);
+        return !string.IsNullOrEmpty(password)
+            && stamp is not null
+            && CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(stamp),
+                Encoding.UTF8.GetBytes(Create(password))
+            );
     }
 }

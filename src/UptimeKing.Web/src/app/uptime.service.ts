@@ -12,26 +12,49 @@ export class UptimeService {
   private hub?: HubConnection;
   private ready?: Promise<void>;
   private refreshVersion = 0;
+  private sessionVersion = 0;
+  private sessionKnown = false;
+  private destroyed = false;
+  private connecting?: Promise<void>;
+  private changeTimer?: ReturnType<typeof setTimeout>;
   private refreshTimer?: ReturnType<typeof setInterval>;
 
   init(): Promise<void> {
     return (this.ready ??= this.start());
   }
   private async start() {
+    this.refreshTimer ??= setInterval(() => {
+      if (!this.sessionKnown) void this.init();
+      else if (this.authenticated()) {
+        void this.refresh();
+        if (this.connection() === 'offline') void this.connect();
+      }
+    }, 30000);
+    const sessionVersion = this.sessionVersion;
     try {
       const session = await this.request<{ authenticated: boolean }>('/api/session');
-      this.authenticated.set(session.authenticated);
+      if (this.destroyed || sessionVersion !== this.sessionVersion) return;
+      this.sessionKnown = true;
+      this.setSession(session.authenticated);
       await this.refresh();
-      if (session.authenticated) await this.connect();
-      this.refreshTimer = setInterval(() => {
-        if (this.authenticated()) void this.refresh();
-      }, 30000);
+      if (this.authenticated()) await this.connect();
     } catch (error) {
+      this.ready = undefined;
       this.error.set(this.message(error));
       this.loading.set(false);
     }
   }
+  private setSession(authenticated: boolean) {
+    ++this.sessionVersion;
+    ++this.refreshVersion;
+    this.sessionKnown = true;
+    this.data.set(null);
+    this.authenticated.set(authenticated);
+    if (!authenticated) this.connection.set('demo');
+  }
   async request<T = void>(path: string, method = 'GET', body?: unknown): Promise<T> {
+    const sessionVersion = this.sessionVersion;
+    const protectedRequest = path !== '/api/session' && path !== '/api/demo';
     const response = await fetch(path, {
       method,
       credentials: 'same-origin',
@@ -40,13 +63,16 @@ export class UptimeService {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (!response.ok) {
-      if (response.status === 401 && this.authenticated()) {
-        this.authenticated.set(false);
-        this.data.set(null);
-        ++this.refreshVersion;
+      if (
+        response.status === 401 &&
+        protectedRequest &&
+        this.authenticated() &&
+        sessionVersion === this.sessionVersion
+      ) {
+        this.setSession(false);
+        const expiredVersion = this.sessionVersion;
         await this.hub?.stop();
-        this.connection.set('demo');
-        await this.refresh();
+        if (expiredVersion === this.sessionVersion) await this.refresh();
       }
       const detail = await response.json().catch(() => ({}));
       throw new Error(
@@ -59,6 +85,8 @@ export class UptimeService {
               : 'Something went wrong. Please try again.'),
       );
     }
+    if (protectedRequest && sessionVersion !== this.sessionVersion)
+      throw new Error('Your session changed. Please try again.');
     return response.status === 204 ? (undefined as T) : response.json();
   }
   async refresh() {
@@ -79,37 +107,59 @@ export class UptimeService {
   }
   async login(password: string) {
     await this.request('/api/session', 'POST', { password });
-    this.authenticated.set(true);
+    this.setSession(true);
     await this.refresh();
-    await this.connect();
+    if (this.authenticated()) await this.connect();
   }
   async logout() {
     await this.request('/api/session', 'DELETE');
+    this.setSession(false);
     await this.hub?.stop();
-    this.authenticated.set(false);
-    this.connection.set('demo');
     await this.refresh();
   }
-  private async connect() {
+  private connect(): Promise<void> {
+    if (this.connecting) return this.connecting;
+    this.connecting = this.startConnection().finally(() => {
+      this.connecting = undefined;
+    });
+    return this.connecting;
+  }
+  private async startConnection() {
     await this.hub?.stop();
+    if (!this.authenticated() || this.destroyed) return;
     this.connection.set('connecting');
-    this.hub = new HubConnectionBuilder()
+    const hub = new HubConnectionBuilder()
       .withUrl('/hubs/dashboard')
       .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
       .configureLogging(LogLevel.Error)
       .build();
-    this.hub.on('dashboardChanged', () => void this.refresh());
-    this.hub.onreconnecting(() => this.connection.set('connecting'));
-    this.hub.onreconnected(() => {
+    this.hub = hub;
+    const current = () => this.hub === hub && this.authenticated() && !this.destroyed;
+    hub.on('dashboardChanged', () => {
+      if (!current() || this.changeTimer) return;
+      // A batch of checks emits several hints; fetch one snapshot for that burst.
+      this.changeTimer = setTimeout(() => {
+        this.changeTimer = undefined;
+        if (current()) void this.refresh();
+      }, 250);
+    });
+    hub.onreconnecting(() => {
+      if (current()) this.connection.set('connecting');
+    });
+    hub.onreconnected(() => {
+      if (!current()) return;
       this.connection.set('live');
       void this.refresh();
     });
-    this.hub.onclose(() => this.connection.set('offline'));
+    hub.onclose(() => {
+      if (current()) this.connection.set('offline');
+    });
     try {
-      await this.hub.start();
-      this.connection.set('live');
+      await hub.start();
+      if (current()) this.connection.set('live');
+      else await hub.stop();
     } catch {
-      this.connection.set('offline');
+      if (current()) this.connection.set('offline');
     }
   }
   async saveMonitor(input: MonitorInput, id?: string) {
@@ -138,6 +188,9 @@ export class UptimeService {
     return error instanceof Error ? error.message : 'Unable to connect. Please try again.';
   }
   ngOnDestroy() {
+    this.destroyed = true;
+    ++this.refreshVersion;
+    clearTimeout(this.changeTimer);
     clearInterval(this.refreshTimer);
     void this.hub?.stop();
   }

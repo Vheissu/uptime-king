@@ -1,8 +1,8 @@
 export type Status = 'up' | 'down' | 'degraded' | 'pending' | 'paused';
 export interface HistoryBucket {
   at: string;
-  averageMs: number;
-  status: Status;
+  averageMs: number | null;
+  status: Status | 'unknown';
 }
 export interface Monitor {
   id: string;
@@ -41,6 +41,7 @@ export interface Dashboard {
     averageMs: number | null;
     openIncidents: number;
   };
+  responseAverageMs: number | null;
   responseHistory: { at: string; averageMs: number }[];
 }
 export interface MonitorInput {

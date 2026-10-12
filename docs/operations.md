@@ -83,7 +83,7 @@ The included Compose file is a local development configuration, including `ASPNE
 5. Configure a real SMTP sender with STARTTLS on the provider's submission port, or enable Discord. Mailpit is only a local capture service.
 6. Review trusted-proxy handling and sign-in rate limits. The default limiter sees the immediate proxy address, so proxied users share its quota.
 
-This version has one shared operator account. It has no account recovery, tenant separation or role system. Changing the password does not revoke existing cookies; plan session/key rotation if immediate revocation is required. Do not use the shared workspace to give unrelated clients access to each other's monitors.
+This version has one shared operator account. It has no account recovery, tenant separation or role system. Changing or removing the configured password rejects existing cookies on the next API request. Environment-variable changes require an API restart. Do not use the shared workspace to give unrelated clients access to each other's monitors.
 
 ## Data and recovery
 
@@ -105,4 +105,4 @@ Use one migrator when deploying multiple instances. The default startup migratio
 - **Sign-in is unavailable:** supply `Auth__Password` with at least 16 characters. In Compose, rerun the setup script if `.env` is missing.
 - **A target cannot be checked:** private/internal hosts, non-standard ports and hostnames resolving to reserved addresses are intentionally rejected. A redirect confirms reachability of the configured URL; it does not check the redirect destination.
 - **A delivery has six failed attempts:** correct the channel configuration. There is no manual resend action in this version; later incident transitions create new deliveries.
-- **A dashboard connection is offline:** the client still refreshes every 30 seconds. Check WebSocket proxy support, then reload if the connection cannot recover. An expired session returns to the demo so you can sign in again.
+- **A dashboard connection is offline:** the client still refreshes every 30 seconds. Check WebSocket proxy support, the next polling interval retries a failed connection. An expired session returns to the demo so you can sign in again.
