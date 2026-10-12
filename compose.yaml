@@ -1,0 +1,45 @@
+name: uptime-king
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: uptime
+      POSTGRES_USER: uptime
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./scripts/setup.sh first}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:54329:5432"]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U uptime -d uptime"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:${MAIL_UI_PORT:-8029}:8025", "127.0.0.1:${SMTP_PORT:-1029}:1025"]
+  api:
+    build:
+      context: .
+      dockerfile: src/UptimeKing.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__uptime: Host=postgres;Database=uptime;Username=uptime;Password=${POSTGRES_PASSWORD}
+      Auth__Password: ${UPTIME_PASSWORD:?Run ./scripts/setup.sh first}
+      Smtp__Host: mail
+      Smtp__Port: 1025
+      Smtp__UseTls: "false"
+      Smtp__From: uptime@localhost
+      Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+    volumes: [data-protection:/app/keys]
+    ports: ["127.0.0.1:5080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      mail: { condition: service_started }
+  web:
+    build:
+      context: .
+      dockerfile: src/UptimeKing.Web/Dockerfile
+    ports: ["127.0.0.1:${WEB_PORT:-8099}:8080"]
+    depends_on: [api]
+volumes:
+  postgres-data:
+  data-protection:

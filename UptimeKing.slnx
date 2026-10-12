@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/UptimeKing.Api/UptimeKing.Api.csproj" />
+    <Project Path="src/UptimeKing.AppHost/UptimeKing.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/UptimeKing.Tests/UptimeKing.Tests.csproj" />
+  </Folder>
+</Solution>

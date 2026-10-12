@@ -1,0 +1,61 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet tool restore
+      - run: dotnet csharpier check .
+      - run: dotnet test tests/UptimeKing.Tests -c Release --logger trx --results-directory TestResults
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/UptimeKing.Web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: src/UptimeKing.Web/package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/setup.sh
+      - run: docker compose up -d --build
+      - name: Wait for the application
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8099/health/ready; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8099/health/ready
+          curl -fsS http://localhost:8099/api/demo | python3 -c 'import json,sys; assert len(json.load(sys.stdin)["monitors"]) == 6'
+          curl -fsS http://localhost:8099/overview | grep -q '<app-root>'
+      - run: docker compose logs --no-color
+        if: failure()
+      - run: docker compose down -v
+        if: always()

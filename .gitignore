@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.angular/
+**/.DS_Store
+.aspire/
+output/
+.playwright-cli/
+TestResults/
+*.user
+*.log
+**/keys/
