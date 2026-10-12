@@ -224,27 +224,6 @@ nav a {
 .sidebar-bottom {
   margin-top: auto;
 }
-.quiet-note {
-  margin: 42px 16px 25px;
-  > i {
-    display: block;
-    font-size: 28px;
-    color: #929f85;
-    margin-bottom: 14px;
-  }
-  strong {
-    font-size: 15px;
-    font-weight: 450;
-    line-height: 1.6;
-    color: #e1e4d9;
-  }
-  p {
-    color: #919b88;
-    font-size: 13px;
-    line-height: 1.8;
-    margin-top: 8px;
-  }
-}
 .source-link {
   display: flex;
   align-items: center;
@@ -379,13 +358,6 @@ main {
   align-items: center;
   gap: 20px;
   margin-bottom: 28px;
-}
-.eyebrow {
-  font-size: 11px;
-  letter-spacing: 1.6px;
-  color: #6a715e;
-  font-weight: 600;
-  margin-bottom: 12px;
 }
 h1 {
   font-size: 32px;
@@ -1489,9 +1461,6 @@ mat-form-field {
     .primary-action {
       margin-top: 0;
     }
-  }
-  .eyebrow {
-    font-size: 10px;
   }
   .metrics {
     grid-template-columns: 1fr 1fr;

@@ -22,13 +22,11 @@ const imports = [
   selector: 'uk-monitor-dialog',
   imports,
   template: ` <h2 mat-dialog-title>
-      {{ original ? 'Edit monitor' : 'A new site to look after.' }}
+      {{ original ? 'Edit monitor' : 'Add monitor' }}
     </h2>
     <form (ngSubmit)="save()" #form="ngForm">
       <mat-dialog-content>
-        <p class="dialog-intro">
-          Check a public website or application. We'll keep the history and flag repeated failures.
-        </p>
+        <p class="dialog-intro">Monitor a public HTTP or HTTPS endpoint.</p>
         <mat-form-field appearance="outline"
           ><mat-label>Monitor name</mat-label
           ><input
@@ -122,11 +120,11 @@ export class MonitorDialog {
 @Component({
   selector: 'uk-login-dialog',
   imports,
-  template: ` <h2 mat-dialog-title>Your workspace, at a glance.</h2>
+  template: ` <h2 mat-dialog-title>Sign in</h2>
     <form (ngSubmit)="login()" #form="ngForm">
       <mat-dialog-content>
         <p class="dialog-intro">
-          Sign in with your workspace password to add monitors and manage notifications.
+          Enter your workspace password to manage monitors and notifications.
         </p>
         <mat-form-field appearance="outline"
           ><mat-label>Workspace password</mat-label
@@ -145,7 +143,7 @@ export class MonitorDialog {
           For a local installation, use the password in your .env file.
         </p> </mat-dialog-content
       ><mat-dialog-actions align="end"
-        ><button type="button" mat-button mat-dialog-close>Keep exploring</button
+        ><button type="button" mat-button mat-dialog-close>Cancel</button
         ><button mat-flat-button type="submit" [disabled]="form.invalid || busy()">
           {{ busy() ? 'Signing in…' : 'Sign in' }}
         </button></mat-dialog-actions

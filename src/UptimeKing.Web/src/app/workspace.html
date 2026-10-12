@@ -17,10 +17,10 @@
     King<span class="brand-period">.</span></a
   >
   <div class="workspace-switch">
-    <span class="workspace-avatar">S</span>
+    <span class="workspace-avatar">{{ api.authenticated() ? 'W' : 'D' }}</span>
     <div>
-      <strong>{{ api.authenticated() ? 'Your workspace' : 'Studio workspace' }}</strong
-      ><span>{{ api.authenticated() ? 'Workspace operator' : 'Demo workspace' }}</span>
+      <strong>{{ api.authenticated() ? 'Your workspace' : 'Demo workspace' }}</strong
+      ><span>{{ api.authenticated() ? 'Workspace operator' : 'Sample data' }}</span>
     </div>
   </div>
   <div class="nav-caption">WORKSPACE</div>
@@ -37,25 +37,20 @@
     }
   </nav>
   <div class="sidebar-bottom">
-    <div class="quiet-note">
-      <i class="ph ph-shield-check" aria-hidden="true"></i
-      ><strong>A watchful eye.<br />A quieter day.</strong>
-      <p>Keep your clients' sites<br />in good company.</p>
-    </div>
     <a
       class="source-link"
       href="https://github.com/Vheissu/uptime-king"
       target="_blank"
       rel="noopener"
-      ><i class="ph ph-github-logo" aria-hidden="true"></i>Behind the build<i
+      ><i class="ph ph-github-logo" aria-hidden="true"></i>Source code<i
         class="ph ph-arrow-up-right"
         aria-hidden="true"
       ></i
     ></a>
     <div class="operator">
-      <span class="operator-avatar">{{ api.authenticated() ? 'YO' : 'UK' }}</span>
+      <span class="operator-avatar">{{ api.authenticated() ? 'OP' : 'UK' }}</span>
       <div>
-        <strong>{{ api.authenticated() ? 'Workspace operator' : 'Take a look around' }}</strong
+        <strong>{{ api.authenticated() ? 'Workspace operator' : 'Read-only demo' }}</strong
         ><button (click)="api.authenticated() ? signOut() : signIn()">
           {{ api.authenticated() ? 'Sign out' : 'Sign in to your workspace' }}
         </button>
@@ -97,37 +92,24 @@
         (click)="refresh()"
       >
         <i class="ph ph-arrows-clockwise"></i></button
-      ><span class="small-avatar">{{ api.authenticated() ? 'YO' : 'UK' }}</span>
+      ><span class="small-avatar">{{ api.authenticated() ? 'OP' : 'UK' }}</span>
     </div>
   </header>
   <main id="main" tabindex="-1">
     <div class="page-heading">
       <div>
-        <div class="eyebrow">{{ view === 'overview' ? 'THE BIG PICTURE' : 'YOUR WORKSPACE' }}</div>
-        <h1>
-          {{
-            view === 'overview'
-              ? 'A little peace of mind.'
-              : view === 'monitors'
-                ? 'Every site. In sight.'
-                : view === 'incidents'
-                  ? 'When things need attention.'
-                  : view === 'clients'
-                    ? 'Good work. Good company.'
-                    : 'The right heads-up.'
-          }}
-        </h1>
+        <h1>{{ title }}</h1>
         <p>
           {{
             view === 'overview'
-              ? 'Your client sites, all accounted for.'
+              ? 'Uptime and response times across your client sites.'
               : view === 'monitors'
-                ? 'Keep an eye on the websites and applications you look after.'
+                ? 'Manage checks for your websites and applications.'
                 : view === 'incidents'
-                  ? 'A clear record of what happened, and when it recovered.'
+                  ? 'Open and resolved outages.'
                   : view === 'clients'
-                    ? 'A home for every client you look after.'
-                    : 'Know when a site goes down, and when it comes back.'
+                    ? 'Monitor status grouped by client.'
+                    : 'Email and Discord alerts for outages and recoveries.'
           }}
         </p>
       </div>
@@ -146,7 +128,7 @@
     @if (api.loading()) {
       <div class="loading-state" role="status">
         <div class="loading-line"></div>
-        <p>Getting your workspace ready…</p>
+        <p>Loading monitors…</p>
       </div>
     }
     @if (api.data(); as data) {
@@ -183,9 +165,7 @@
               }}<span class="incident-spark" [class.healthy]="!data.summary.openIncidents"></span
             ></strong>
             <p>
-              {{
-                data.summary.openIncidents ? 'A little attention needed' : 'All quiet on this front'
-              }}
+              {{ data.summary.openIncidents ? 'Unresolved outages' : 'No unresolved outages' }}
             </p>
           </div>
         </section>
@@ -193,7 +173,7 @@
           <a class="incident-banner" routerLink="/incidents"
             ><span class="incident-icon"><i class="ph ph-warning" aria-hidden="true"></i></span
             ><span
-              ><strong>{{ incident.monitorName }} needs your attention.</strong
+              ><strong>{{ incident.monitorName }} is down</strong
               ><span>{{ incident.cause }} · Open for {{ duration(incident) }}</span></span
             ><span class="incident-link"
               >View incident<i class="ph ph-arrow-right" aria-hidden="true"></i></span
@@ -209,7 +189,7 @@
         <section class="monitor-section">
           <div class="section-heading">
             <div class="section-title">
-              <h2>Your monitors</h2>
+              <h2>Monitors</h2>
               <span class="count">{{ data.monitors.length }}</span>
             </div>
             <div class="table-controls">
@@ -340,17 +320,13 @@
                       <div class="empty-state">
                         <i class="ph ph-binoculars" aria-hidden="true"></i>
                         <h3>
-                          {{
-                            data.monitors.length
-                              ? 'No monitors match.'
-                              : 'Your first monitor starts here.'
-                          }}
+                          {{ data.monitors.length ? 'No monitors match.' : 'No monitors yet.' }}
                         </h3>
                         <p>
                           {{
                             data.monitors.length
                               ? 'Try another search or clear your filters.'
-                              : 'Add a client website and we’ll start keeping watch.'
+                              : 'Add a website URL to start recording checks.'
                           }}
                         </p>
                         @if (data.monitors.length) {
@@ -361,7 +337,7 @@
                             Clear filters
                           </button>
                         } @else {
-                          <button mat-flat-button (click)="add()">Add your first monitor</button>
+                          <button mat-flat-button (click)="add()">Add monitor</button>
                         }
                       </div>
                     </td>
@@ -375,7 +351,7 @@
             ><span
               ><i class="ph ph-clock" aria-hidden="true"></i
               >{{
-                data.isDemo ? 'Illustrative check history' : 'Checks run on each monitor’s schedule'
+                data.isDemo ? 'Sample check history' : 'Checks run on each monitor’s schedule'
               }}</span
             >
           </div>
@@ -387,7 +363,7 @@
             <div class="section-heading">
               <div>
                 <h2>Response time</h2>
-                <p>The pace of your portfolio.</p>
+                <p>Hourly averages across all monitors.</p>
               </div>
               <span class="period-label"
                 >Last 24 hours<i class="ph ph-clock" aria-hidden="true"></i
@@ -439,16 +415,14 @@
                 <text x="600" y="202">{{ data.asOf | date: 'HH:mm' }}</text>
               </svg>
             } @else {
-              <div class="empty-chart">
-                Your response history will appear after the first check.
-              </div>
+              <div class="empty-chart">Response history appears after the first check.</div>
             }
           </section>
           <section class="activity-panel">
             <div class="section-heading">
               <div>
                 <h2>Recent incidents</h2>
-                <p>The things worth knowing.</p>
+                <p>Latest outages and recoveries.</p>
               </div>
               <a routerLink="/incidents" class="text-link"
                 >View all<i class="ph ph-arrow-up-right" aria-hidden="true"></i
@@ -477,7 +451,7 @@
               } @empty {
                 <div class="empty-state compact">
                   <i class="ph ph-check-circle" aria-hidden="true"></i>
-                  <p>No incidents to report.</p>
+                  <p>No incidents recorded.</p>
                 </div>
               }
             </div>
@@ -526,7 +500,7 @@
           } @empty {
             <div class="empty-state">
               <i class="ph ph-check-circle" aria-hidden="true"></i>
-              <h3>All quiet here.</h3>
+              <h3>No incidents</h3>
               <p>No {{ incidentFilter() === 'all' ? '' : incidentFilter() }} incidents to show.</p>
             </div>
           }
@@ -555,7 +529,7 @@
             </button>
           } @empty {
             <div class="empty-state">
-              <h3>Meet your first client.</h3>
+              <h3>No clients yet</h3>
               <p>Clients appear here when you add their first monitor.</p>
               <button mat-flat-button (click)="add()">Add a monitor</button>
             </div>
@@ -568,11 +542,8 @@
             <div class="notification-illustration">
               <i class="ph ph-bell-ringing" aria-hidden="true"></i>
             </div>
-            <h2>A heads-up, wherever you work.</h2>
-            <p>
-              Receive incident and recovery alerts by email or in your Discord channel. Sign in to
-              connect your workspace.
-            </p>
+            <h2>Configure notifications</h2>
+            <p>Sign in to choose an email recipient or add a Discord webhook.</p>
             <div class="channel-previews">
               <span><i class="ph ph-envelope-simple" aria-hidden="true"></i>Email</span
               ><span><i class="ph ph-discord-logo" aria-hidden="true"></i>Discord</span>
@@ -592,7 +563,7 @@
                   ></span>
                   <div>
                     <h2>Email</h2>
-                    <p>Incident reports, straight to your inbox.</p>
+                    <p>Send alerts to an email address.</p>
                   </div>
                   <mat-slide-toggle
                     name="emailEnabled"
@@ -624,7 +595,7 @@
                   ></span>
                   <div>
                     <h2>Discord</h2>
-                    <p>Keep your team in the loop.</p>
+                    <p>Post alerts to a Discord channel.</p>
                   </div>
                   <mat-slide-toggle
                     name="discordEnabled"
@@ -682,11 +653,9 @@
         }
       }
       <footer class="page-footer">
-        <span
-          ><i class="ph ph-crown-simple" aria-hidden="true"></i>A watchful eye on the work you care
-          about.</span
-        ><span>{{
-          data.isDemo ? 'Demo workspace · illustrative data' : 'Uptime King · your workspace'
+        <span>Last updated {{ data.asOf | date: 'HH:mm:ss' }}</span>
+        <span>{{
+          data.isDemo ? 'Demo workspace · sample data' : 'Uptime King · your workspace'
         }}</span>
       </footer>
     }

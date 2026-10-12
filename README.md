@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src/UptimeKing.Web/public/favicon.svg" width="64" height="64" alt="Uptime King crown">
   <h1>Uptime King</h1>
-  <p>A little peace of mind for the sites you look after.</p>
+  <p>Uptime monitoring for client websites and applications.</p>
 
 [![CI](https://github.com/Vheissu/uptime-king/actions/workflows/ci.yml/badge.svg)](https://github.com/Vheissu/uptime-king/actions/workflows/ci.yml)
 ![.NET 10](https://img.shields.io/badge/.NET-10-512BD4)
@@ -9,7 +9,7 @@
 [![MIT](https://img.shields.io/badge/license-MIT-242824)](LICENSE)
 </div>
 
-Uptime King keeps an eye on client websites and applications. Group monitors by client, spot a failing site, inspect its check history, and get an email or Discord notification when it goes down or recovers.
+Uptime King monitors client websites and applications. Group monitors by client, spot a failing site, inspect its check history, and get an email or Discord notification when it goes down or recovers.
 
 Built with ASP.NET Core, Angular and PostgreSQL. The scheduler, incident tracking, live updates and notification delivery all run locally. Docker Compose gets the whole application running; .NET Aspire gives you a development environment with resource health, traces and metrics.
 
